@@ -33,6 +33,9 @@ lemma = nltk.wordnet.WordNetLemmatizer()
 
 
 def parse_object_list(content):
+
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0].strip()
     try:
         content = json.loads(content)
     except:
@@ -329,6 +332,7 @@ class CHAIR(object):
 
             resp = None
             try:
+                time.sleep(10)
                 resp = self.chat_model.chat_completion(messages=messages)
                 print(resp["model"])
 
@@ -342,7 +346,7 @@ class CHAIR(object):
                 content = parse_object_list(content)
 
                 # API Rest
-                time.sleep(5)
+                
 
                 data_item["extract_objs"] = content
                 success_tokens = {"total": resp['usage']['total_tokens'],
@@ -357,7 +361,7 @@ class CHAIR(object):
 
                 time.sleep(10 + fail_cnt)
 
-    def gpt_caption_processor(self, max_workers=64):
+    def gpt_caption_processor(self, max_workers=1):
         data_list = self.caps
         new_data = []
         all_used_tokens = {"total": 0, "input": 0, "output": 0}
@@ -405,9 +409,13 @@ class CHAIR(object):
 
     def get_pred_objs_match(self, caps):
         new_caps = []
+        error_cout = 0
         for item in caps:
             caps_gpt_objs = item["extract_objs"]
-            assert caps_gpt_objs != f'-1\n<no_response>'
+            if caps_gpt_objs == f'-1\n<no_response>':
+                error_cout += 1
+                print(error_cout)
+                continue
             refined_objs = []
             for text in caps_gpt_objs:
                 text = f"a {text}"
@@ -447,7 +455,10 @@ class CHAIR(object):
 
         if gpt_process:
             caps, all_used_tokens, all_success_tokens = self.gpt_caption_processor()
+            # caps = json.load(open("results/RLAIF-V/caps.json"))
             caps = self.get_pred_objs_match(caps)
+            all_used_tokens = {}
+            all_success_tokens = {}
         else:
             all_used_tokens = {}
             all_success_tokens = {}
