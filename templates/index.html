@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image and Text Display</title>
+</head>
+<body>
+    <h1>Image and Text Display</h1>
+    <div style="display: flex;">
+        <div style="flex: 1;">
+            <img src="{{ image_path }}" alt="Image" style="max-width: 500px; max-height: 500px;">
+        </div>
+        <div style="flex: 1; padding-left: 20px;">
+            <p><strong>Prompt:</strong> {{ prompt }}</p>
+            <p><strong>lora DPO:</strong></p>
+            <p><strong>Generated Caption:</strong> {{ gen_cap }}</p>
+            <p><strong>Ground Truth Words:</strong> {{ gt_words }}</p>
+            <p><strong>Generated Words:</strong> {{ mscoco_generated_words }}</p>
+            <p><strong>Hallucinated Words:</strong> {{ mscoco_hallucinated_words }}</p>
+            <p><strong>base llava:</strong></p>
+            <p><strong>Generated Caption:</strong> {{ gen_cap_base }}</p>
+            <p><strong>Ground Truth Words:</strong> {{ gt_words_base }}</p>
+            <p><strong>Generated Words:</strong> {{ mscoco_generated_words_base }}</p>
+            <p><strong>Hallucinated Words:</strong> {{ mscoco_hallucinated_words_base }}</p>
+            
+        </div>
+    </div>
+    <div style="display: flex; justify-content: center; align-items: center; margin-top: 20px;">
+        <form action="/pre" method="get" style="margin-right: 20px;">
+            <button type="submit">Pre</button>
+        </form>
+        <p style="margin: 0 20px;"><strong>index</strong> {{ index }}</p>
+        <form action="/next" method="get" style="margin-left: 20px;">
+            <button type="submit">Next</button>
+        </form>
+    </div>
+</body>
+</html>

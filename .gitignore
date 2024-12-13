@@ -6,3 +6,13 @@ pip.txt
 pip_test.txt
 test.py
 requirements.txt
+.ckpt/
+RLAIF-V-Dataset/
+RLAIF-V-Dataset_logps/
+RLAIF_V.egg-info/
+eval/annotations/
+eval/annotations_trainval2014.zip
+eval/data/mmhal-bench_with_image.jsonl
+result/
+static/*
+wget-log

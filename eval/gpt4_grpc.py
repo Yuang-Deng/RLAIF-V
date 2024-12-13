@@ -1,19 +1,26 @@
 import openai
 import time
+import os
 
 NUM_SECONDS_TO_SLEEP = 0.5
 
+# 配置 OpenAI API 的基础信息
+openai.api_type = "azure"
+openai.api_base = "https://openaieastus2instance.openai.azure.com/"
+openai.api_version = "2023-07-01-preview"
+openai.api_key = os.environ.get("openai_key")
+
 class Chat:
     def __init__(self, model="", timeout_sec=20, openai_apikey=''):
-        self.model = model
+        self.model = "gpt4o-zxp"
         self.timeout = timeout_sec
-        openai.api_key = openai_apikey
 
     def chat_completion(self, messages, temperature=0.2, top_p=1, max_tokens=512,
                         presence_penalty=0, frequency_penalty=0):
 
         response = openai.ChatCompletion.create(
-            model=self.model,
+            engine=self.model,
+            # model=self.model,
             messages=messages,
             temperature=temperature,
             top_p=top_p,
@@ -31,7 +38,7 @@ def get_eval(model, content: str,
              fail_limit=100,
              openai_apikey=""):
 
-    openai.api_key = openai_apikey
+    # openai.api_key = openai_apikey
 
     while True:
         try:
