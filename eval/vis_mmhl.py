@@ -20,13 +20,13 @@ def read_jsonl(jsonl_file):
   
   
 
-questions = [json.loads(q) for q in open(os.path.expanduser("./eval/data/obj_halbench_300_with_image.jsonl"), "r")]
+questions = [json.loads(q) for q in open(os.path.expanduser("./eval/data/mmhal-bench_with_image.jsonl"), "r")]
 
-answers = json.load(open('./result/RLAIF-V-7B/hall_obj_halbench_answer_-1.json', 'r', encoding='utf-8'))
-gen_file = [json.loads(q) for q in open(os.path.expanduser("./result/RLAIF-V-7B/obj_halbench_answer.jsonl"), "r")]
+answers = json.load(open('result/RLAIF-V-7B/mmhal-bench_answer.jsonl.mmhal_test_eval.json.merge_gpt4_score.json', 'r', encoding='utf-8'))
+gen_file = [json.loads(q) for q in open(os.path.expanduser("./result/RLAIF-V-7B/mmhal-bench_answer.jsonl"), "r")]
 
-answers_base = json.load(open('./result/llava/hall_obj_halbench_answer_-1.json', 'r', encoding='utf-8'))
-gen_file_base = [json.loads(q) for q in open(os.path.expanduser("./result/llava/obj_halbench_answer.jsonl"), "r")]
+answers_base = json.load(open('result/llava/mmhal-bench_answer.jsonl.mmhal_test_eval.json.merge_gpt4_score.json', 'r', encoding='utf-8'))
+gen_file_base = [json.loads(q) for q in open(os.path.expanduser("./result/llava/mmhal-bench_answer.jsonl"), "r")]
 
 # for q, a, g in zip(questions, answers["sentences"], gen_file):
 #     assert q["image_id"] == a["image_id"]
@@ -49,45 +49,43 @@ current_index = 0
 def display():
     global current_index
     q = questions[current_index]
-    a_lora = answers["sentences"][current_index]
-    g_lora = gen_file[current_index]
-    a_base = answers_base["sentences"][current_index]
-    g_base = gen_file_base[current_index]
+    a_lora = answers[current_index]
+    a_base = answers_base[current_index]
 
     # 解码图片
     image_bytes = base64.b64decode(q["image"])
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
     # 将图片保存为临时文件
-    image_path = f"static/image_{current_index}.png"
+    image_path = f"static/image_mmhl_{current_index}.png"
     image.save(image_path)
 
     # 获取文本字段
-    prompt = g_lora["prompt"]
-    gen_cap = g_lora["text"]
-    gt_words = a_lora["mscoco_gt_words"]
-    mscoco_generated_words = a_lora["mscoco_generated_words"]
-    mscoco_hallucinated_words = a_lora["mscoco_hallucinated_words"]
+    print()
+    question_type = a_lora["question_type"]
+    question_topic = a_lora["question_topic"]
+    image_content = a_lora["image_content"]
+    question = a_lora["question"]
+    gt_answer = a_lora["gt_answer"]
     
-    prompt_base = g_base["prompt"]
-    gen_cap_base = g_base["text"]
-    gt_words_base = a_base["mscoco_gt_words"]
-    mscoco_generated_words_base = a_base["mscoco_generated_words"]
-    mscoco_hallucinated_words_base = a_base["mscoco_hallucinated_words"]
+    model_answer_DPO = a_lora["model_answer"]
+    gpt4_review_DPO = a_lora["gpt4_review"]
+    model_answer_base = a_base["model_answer"]
+    gpt4_review_base = a_base["gpt4_review"]
 
     return render_template(
-        "index.html",
+        "index_mmhl.html",
         image_path=image_path,
-        prompt=prompt,
-        gen_cap=gen_cap,
-        gt_words=gt_words,
-        mscoco_generated_words=mscoco_generated_words,
-        mscoco_hallucinated_words=mscoco_hallucinated_words,
-        gen_cap_base=gen_cap_base,
-        gt_words_base=gt_words_base,
-        mscoco_generated_words_base=mscoco_generated_words_base,
-        mscoco_hallucinated_words_base=mscoco_hallucinated_words_base,
-        index=current_index
+        question_type=question_type,
+        question_topic=question_topic,
+        image_content=image_content,
+        
+        question=question,
+        gt_answer=gt_answer,
+        model_answer_DPO=model_answer_DPO,
+        gpt4_review_DPO=gpt4_review_DPO,
+        model_answer_base=model_answer_base,
+        gpt4_review_base=gpt4_review_base,
     )
 
 @app.route("/next")

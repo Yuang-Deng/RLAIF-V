@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image and Text Display</title>
+</head>
+<body>
+    <h1>Image and Text Display</h1>
+    <div style="display: flex;">
+        <div style="flex: 1;">
+            <img src="{{ image_path }}" alt="Image" style="max-width: 500px; max-height: 500px;">
+            <p><strong>Question Type:</strong> {{ question_type }}</p>
+            <p><strong>Question Topic:</strong> {{ question_topic }}</p>
+            <p><strong>Image Content:</strong> {{ image_content }}</p>
+        </div>
+        <div style="flex: 1; padding-left: 20px;">
+            <p><strong>Question:</strong> {{ question }}</p>
+            <p><strong>Ground Truth Answer:</strong> {{ gt_answer }}</p>
+            <hr>
+            <p><strong>Model Answer DPO:</strong> {{ model_answer_DPO }}</p>
+            <p><strong>GPT-4 Review DPO:</strong> {{ gpt4_review_DPO }}</p>
+            <hr>
+            <p><strong>Model Answer Base:</strong> {{ model_answer_base }}</p>
+            <p><strong>GPT-4 Review Base:</strong> {{ gpt4_review_base }}</p>
+        </div>
+    </div>
+    <div style="display: flex; justify-content: center; align-items: center; margin-top: 20px;">
+        <form action="/pre" method="get" style="margin-right: 20px;">
+            <button type="submit">Pre</button>
+        </form>
+        <p style="margin: 0 20px;"><strong>index</strong> {{ index }}</p>
+        <form action="/next" method="get" style="margin-left: 20px;">
+            <button type="submit">Next</button>
+        </form>
+    </div>
+</body>
+</html>

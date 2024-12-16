@@ -12,9 +12,9 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "--model-path", "liuhaotian/llava-v1.5-7b",
+                "--model-path", "openbmb/RLAIF-V-7B",
                 "--question-file", "./eval/data/obj_halbench_300_with_image.jsonl",
-                "--answers-file", "./result/llava/obj_halbench_answer.jsonl",
+                "--answers-file", "./result/RLAIF-V-7B/obj_halbench_answer.jsonl",
                 "--temperature", "0",
                 "--num_beam", "3"
             ],
@@ -31,7 +31,7 @@
             "justMyCode": false,
             "args": [
                 "--coco_path", "eval/annotations",
-                "--cap_folder", "result/llava",
+                "--cap_folder", "result/RLAIF-V-7B",
                 "--cap_type", "obj_halbench_answer.jsonl",
                 "--org_folder", "./eval/data/obj_halbench_300_with_image.jsonl",
                 "--use_gpt",
@@ -49,9 +49,9 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "--model-path", "liuhaotian/llava-v1.5-7b",
+                "--model-path", "openbmb/RLAIF-V-7B",
                 "--question-file", "./eval/data/mmhal-bench_with_image.jsonl",
-                "--answers-file", "./result/llava/mmhal-bench_answer.jsonl",
+                "--answers-file", "./result/RLAIF-V-7B/mmhal-bench_answer.jsonl",
                 "--temperature", "0",
                 "--num_beam", "3"
             ],
@@ -85,11 +85,19 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                // "--model-path", "liuhaotian/llava-v1.5-7b",
-                // "--question-file", "./eval/data/obj_halbench_300_with_image.jsonl",
-                // "--answers-file", "./result/llava/obj_halbench_answer.jsonl",
-                // "--temperature", "0",
-                // "--num_beam", "3"
+            ],
+            "env": {
+                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
+            }
+        },
+        {
+            "name": "vis mmhl",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "eval/vis_mmhl.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
             ],
             "env": {
                 "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"

@@ -155,13 +155,6 @@ if __name__ == '__main__':
                     temperature=0.0,
                 )
                 try:
-                    if response['model'] != chat.model:
-                        real_model = response['model']
-                        print(f'Except f{chat.model}, but got message from f{real_model}', flush=True)
-
-                        response = None
-                        continue
-
                     print(response['model'])
                     content = response["choices"][0]["message"]["content"]
                     time.sleep(5)
@@ -200,6 +193,8 @@ if __name__ == '__main__':
         scores_found = []
         for s in range(7):
             if f'rating: {s}' in response.lower():
+                scores_found.append(s)
+            elif f'rating: {s}' in response.lower():
                 scores_found.append(s)
         if len(scores_found) == 1:
             scores.append(scores_found[0])
