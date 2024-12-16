@@ -75,6 +75,7 @@ def display():
 
     return render_template(
         "index_mmhl.html",
+        index=current_index,
         image_path=image_path,
         question_type=question_type,
         question_topic=question_topic,
@@ -101,7 +102,7 @@ def pre_item():
     return redirect(url_for("display"))
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=6988)
 
     
     

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from torch.utils.data import Dataset
 
 from utils.utils import is_main_process, get_rank
-from muffin.train.trainers import LLaVA15DPOTrainer
+from muffin.train.trainers import LLaVA15DPOTrainer, LLaVA15DPOTrainerCustom
 from muffin.data.datasets import SingleDataSourceDataset, MultiDataSourceDataset,RLAIFVDataset
 from muffin.data.data_processors import register_data_path
 from muffin.train.train_utils import encode_multimodal_preference_sample, preprocess_v1
@@ -379,7 +379,7 @@ def init_model(model_args, data_args, training_args, attn_implementation):
     elif training_args.task == 'DPO':
         data_module = make_dpo_data_module(tokenizer, data_args=data_args, reference_model=copy.deepcopy(model).cuda())
 
-    return model.cuda(), data_module, tokenizer
+    return model.cuda(), data_module, tokenizer, copy.deepcopy(model).cuda()
 
 
 def get_local_dir(prefixes_to_resolve: List[str]) -> str:
@@ -411,7 +411,7 @@ def train(attn_implementation=None):
     data_args.kto_rej_data_source_names = data_args.kto_rej_data_source_names.split('#')
     data_args.kto_rej_data_source_weights = list(map(int, data_args.kto_rej_data_source_weights.split('#')))
 
-    model, data_module, tokenizer = init_model(
+    model, data_module, tokenizer, teacher_model = init_model(
         model_args, data_args, training_args, attn_implementation=attn_implementation)
 
     print(f"Is lora: {training_args.lora_enable}") # True
@@ -421,6 +421,11 @@ def train(attn_implementation=None):
     elif training_args.task == 'DPO':
         # TODO
         trainer = LLaVA15DPOTrainer(model=model,
+                                   tokenizer=tokenizer,
+                                   args=training_args,
+                                   **data_module)
+        trainer = LLaVA15DPOTrainerCustom(model=model,
+                                          teacher_model=teacher_model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    **data_module)

@@ -274,7 +274,42 @@ def get_beta_and_logps(data_dict, model, args, is_minicpm=False, is_llava15=Fals
         [win_size, rej_size])
     return policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta
 
+class LLaVA15DPOTrainerCustom(ZephyrTrainer):
+    def __init__(self, teacher_model, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.teacher_model = teacher_model
 
+    def compute_loss(self, model: Module, inputs: dict, return_outputs=False):
+        if self.args.past_index >= 0:
+            raise NotImplementedError
+
+        def gather_and_do_mean(x):
+            return self._nested_gather(x.mean()).mean().item()
+
+        data_dict = inputs
+        policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta = get_beta_and_logps(
+            data_dict, model, self.args, is_llava15=True)
+
+        losses, chosen_rewards, rejected_rewards = dpo_loss(policy_win_logp,
+                                                            policy_rej_logp,
+                                                            ref_win_logp,
+                                                            ref_rej_logp,
+                                                            beta=beta)
+        reward_accuracies = (chosen_rewards > rejected_rewards).float()
+
+        SFT_weight = float(os.environ.get('SFT_weight', 0.0))
+        DPO_weight = float(os.environ.get('DPO_weight', 1.0))
+        loss = DPO_weight * losses.mean() - SFT_weight * policy_win_logp.mean()
+
+        t = 'train' if model.training else 'test'
+        metrics = {}
+        metrics = collect_preference_metrics(metrics, t, chosen_rewards, rejected_rewards,
+                                             policy_rej_logp, policy_win_logp,
+                                             ref_rej_logp, ref_win_logp, reward_accuracies,
+                                             gather_and_do_mean)
+        self.log(metrics)
+
+        return loss
 
 class LLaVA15DPOTrainer(ZephyrTrainer):
 
