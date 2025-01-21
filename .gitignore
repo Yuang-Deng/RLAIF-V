@@ -16,3 +16,6 @@ eval/data/mmhal-bench_with_image.jsonl
 result/
 static/*
 wget-log
+eval/MathVista/
+splited_dataset
+.ckpt_old

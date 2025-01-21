@@ -1,3 +1,4 @@
+from datasets import load_dataset
 import argparse
 import torch
 import os
@@ -36,14 +37,17 @@ def eval_model(args):
     model_name = args.model_name
     tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_base, model_name, device_map={"": 'cuda'})
 
-    questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
-    questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
+    # questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
+    # questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
+    questions = load_dataset("AI4Math/MathVista")['testmini']
     answers_file = os.path.expanduser(args.answers_file)
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
     ans_file = open(answers_file, "w")
     question_idx=0
     for line in tqdm(questions):
         qs = line["question"]
+        if line['choices'] != None:
+            qs += '\nPlease choose the correct option from the following choices: ' + ', '.join(line["choices"])
         cur_prompt = qs
         if model.config.mm_use_im_start_end:
             qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + qs
@@ -58,9 +62,12 @@ def eval_model(args):
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
 
         if 'image' in line.keys():
-            image_file = line["image"]
-            image_bytes = base64.b64decode(image_file)
-            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            if 'decoded_image' in line.keys():
+                image = line['decoded_image']
+            else:
+                image_file = line["image"]
+                image_bytes = base64.b64decode(image_file)
+                image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         elif 'image_path' in line.keys():
             image_path = line['image_path']
             image = Image.open(image_path).convert('RGB')
@@ -85,12 +92,16 @@ def eval_model(args):
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
 
         ans_id = shortuuid.uuid()
-        ans_file.write(json.dumps({"question_id": question_idx,
-                                   "image_id": line['image_id'] if 'image_id' in line else line['image_url'],
+        response = {"question_id": question_idx,
+                    'pid': line['pid'],
+                                   "image_id": line['image'] if 'image' in line else line['image_url'],
                                    "prompt": cur_prompt,
                                    "text": outputs,
                                    "model_id": model_name
-                                   }) + "\n")
+                                   }
+        if 'answer' in line.keys():
+            response["answer"] = line['answer']
+        ans_file.write(json.dumps(response) + "\n")
         ans_file.flush()
         question_idx += 1
     ans_file.close()
@@ -99,7 +110,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
     parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--model-name", type=str, default="llava-v1.5-7b")
+    parser.add_argument("--model-name", type=str, default=None)
     parser.add_argument("--image-folder", type=str, default="")
     parser.add_argument("--question-file", type=str, default="tables/question.jsonl")
     parser.add_argument("--answers-file", type=str, default="answer.jsonl")

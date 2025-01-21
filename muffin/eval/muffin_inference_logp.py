@@ -308,6 +308,8 @@ def write_logp_to_preference_parquet(origin_data, cache_file, logps, overwrite_l
         for idx, start in enumerate(range(0, len(out_data), step)):
             temp_data = out_data[start: min(start+step, len(out_data))]
             df = pd.DataFrame(temp_data)
+            if not os.path.exists(cache_file):
+                os.makedirs(cache_file)
             df.to_parquet(os.path.join(cache_file, f'RLAIF-V-Dataset-withlogp_{idx:03}-{len(temp_data)}.parquet'))
 
     torch.distributed.barrier()

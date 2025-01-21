@@ -16,6 +16,7 @@ from torch.nn import Module
 from utils.utils import is_main_process
 
 from muffin.eval.muffin_inference_logp import get_batch_logps, get_batch_logps_minicpm
+import json
 
 
 class ChunckedRandomSampler(Sampler[int]):
@@ -123,51 +124,8 @@ def dpo_loss(policy_chosen_logps: torch.FloatTensor,
     rejected_rewards = beta * \
         (policy_rejected_logps - reference_rejected_logps).detach()
 
-    return losses, chosen_rewards, rejected_rewards
-
-def mpo_loss(policy_chosen_logps: torch.FloatTensor,
-             policy_rejected_logps: torch.FloatTensor,
-             reference_chosen_logps: torch.FloatTensor,
-             reference_rejected_logps: torch.FloatTensor,
-             yc_len,
-             beta: float,
-             delta: float = 0.1,
-             reference_free: bool = False) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
-    """Compute the DPO loss for a batch of policy and reference model log probabilities.
-
-    Args:
-        policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
-        policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
-        reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
-        reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
-        beta: Temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5. We ignore the reference model as beta -> 0.
-        reference_free: If True, we ignore the _provided_ reference model and implicitly use a reference model that assigns equal probability to all responses.
-
-    Returns:
-        A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
-        The losses tensor contains the DPO loss for each example in the batch.
-        The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
-    """
-    pi_logratios = policy_chosen_logps - policy_rejected_logps
-    ref_logratios = reference_chosen_logps - reference_rejected_logps
-
-    if reference_free:
-        ref_logratios = 0
-
-    logits = pi_logratios - ref_logratios
-
-    losses = -F.logsigmoid(beta * logits)
-    chosen_rewards = beta * (policy_chosen_logps -
-                             reference_chosen_logps).detach()
-    rejected_rewards = beta * \
-        (policy_rejected_logps - reference_rejected_logps).detach()
-        
-    lq_choice = -F.logsigmoid(chosen_rewards - delta)
-    lq_reject = -F.logsigmoid(delta - rejected_rewards)
-    quality_loss = lq_choice + lq_reject
-    
-    sft_loss = - (policy_chosen_logps / yc_len)
-    return losses, quality_loss, sft_loss, chosen_rewards, rejected_rewards
+    P_theta = F.sigmoid(chosen_rewards - rejected_rewards)
+    return losses, chosen_rewards, rejected_rewards, P_theta
 
 def compute_weighted_logp(per_token_logp, labels, token_weight, use_average):
     loss_mask = (labels[:, 1:].clone() != -100)
@@ -202,7 +160,7 @@ def collect_preference_metrics(metrics, task,
     return metrics
 
 
-def get_beta_and_logps(data_dict, model, args, is_minicpm=False, is_llava15=False):
+def get_beta_and_logps(data_dict, model, args, is_minicpm=False, is_llava15=False, base_model=None):
     win_input_ids = data_dict.pop('win_input_ids')
     rej_input_ids = data_dict.pop('rej_input_ids')
 
@@ -247,6 +205,33 @@ def get_beta_and_logps(data_dict, model, args, is_minicpm=False, is_llava15=Fals
     concatenated_token_weight = data_dict.pop('concatenated_token_weight')
 
     if is_llava15:
+        (
+            _,
+            _,
+            _,
+            _,
+            base_concatenated_inputs_embeds,
+            base_concatenated_labels
+        ) = base_model.prepare_inputs_labels_for_multimodal(
+            input_ids=concatenated_input_ids,
+            position_ids=None,
+            attention_mask=None,
+            past_key_values=None,
+            labels=concatenated_labels,
+            images=concatenated_images,
+        )
+        base_output = base_model.forward(
+            inputs_embeds=base_concatenated_inputs_embeds,
+            labels=None,
+            **data_dict,
+        )
+        base_log_prob, base_average_log_prob = get_batch_logps(
+            base_output.logits, base_concatenated_labels, return_per_token_logp=False)
+        if args.dpo_use_average:
+            base_concatenated_logp = base_average_log_prob
+        else:
+            base_concatenated_logp = base_log_prob
+            
         (
             _,
             _,
@@ -314,9 +299,144 @@ def get_beta_and_logps(data_dict, model, args, is_minicpm=False, is_llava15=Fals
             print(f'concatenated_logp fail', flush=True)
             exit()
 
+    base_policy_win_logp, base_policy_rej_logp = base_concatenated_logp.split(
+        [win_size, rej_size])
     policy_win_logp, policy_rej_logp = concatenated_logp.split(
         [win_size, rej_size])
-    return policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta
+    return policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta, base_policy_win_logp, base_policy_rej_logp
+
+class LLaVA15DPOTrainerCustom(ZephyrTrainer):
+    def __init__(self, base_model, base_tokenizer, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.base_model=base_model
+        self.base_tokenizer=base_tokenizer
+        self.all_data_count = 0
+        self.all_count_base_less_than_p = 0
+        self.all_count_base_greater_than_half = 0
+        self.all_count_p_greater_than_half = 0
+        # Clear the contents of the theta.jsonl file
+        theta_file = 'muffin/train/theta.jsonl'
+        with open(theta_file, 'w') as f:
+            f.write('')
+        
+    def training_step(
+        self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num_items_in_batch=None
+    ) -> torch.Tensor:
+        """
+        Perform a training step on a batch of inputs.
+
+        Subclass and override to inject custom behavior.
+
+        Args:
+            model (`nn.Module`):
+                The model to train.
+            inputs (`Dict[str, Union[torch.Tensor, Any]]`):
+                The inputs and targets of the model.
+
+                The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
+                argument `labels`. Check your model's documentation for all accepted arguments.
+
+        Return:
+            `torch.Tensor`: The tensor with training loss on this batch.
+        """
+        model.train()
+        if hasattr(self.optimizer, "train") and callable(self.optimizer.train):
+            self.optimizer.train()
+
+        inputs = self._prepare_inputs(inputs)
+
+        with self.compute_loss_context_manager():
+            if self.model_accepts_loss_kwargs:
+                loss = self.compute_loss(model, inputs)
+            else:
+                loss = self.compute_loss(model, inputs, num_items_in_batch=num_items_in_batch)
+
+        del inputs
+        if (
+            self.args.torch_empty_cache_steps is not None
+            and self.state.global_step % self.args.torch_empty_cache_steps == 0
+        ):
+            torch.cuda.empty_cache()
+
+        kwargs = {}
+
+        if self.args.n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
+        if self.use_apex:
+            # with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+            #     scaled_loss.backward()
+            pass
+        else:
+            # self.accelerator.backward(loss, **kwargs)
+            # Finally we need to normalize the loss for reporting
+            if num_items_in_batch is None:
+                return loss.detach() / self.args.gradient_accumulation_steps
+            return loss.detach()
+
+    def compute_loss(self, model: Module, inputs: dict, return_outputs=False):
+        if self.args.past_index >= 0:
+            raise NotImplementedError
+
+        with torch.no_grad():
+            def gather_and_do_mean(x):
+                return self._nested_gather(x.mean()).mean().item()
+
+            data_dict = inputs
+            policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta, base_policy_win_logp,base_policy_rej_logp = get_beta_and_logps(
+                data_dict, model, self.args, is_llava15=True, base_model=self.base_model)
+
+            base_losses, base_chosen_rewards, base_rejected_rewards, base_p_theta = dpo_loss(base_policy_win_logp,
+                                                                base_policy_rej_logp,
+                                                                ref_win_logp,
+                                                                ref_rej_logp,
+                                                                beta=beta, reference_free=True)
+            
+            losses, chosen_rewards, rejected_rewards, p_theta = dpo_loss(policy_win_logp,
+                                                                policy_rej_logp,
+                                                                ref_win_logp,
+                                                                ref_rej_logp,
+                                                                beta=beta, reference_free=True)
+            count_base_less_than_p = (base_p_theta < p_theta).sum().item()
+            count_base_greater_than_half = (base_p_theta > 0.5).sum().item()
+            count_p_greater_than_half = (p_theta > 0.5).sum().item()
+
+            print(f'base_p_theta < p_theta: {count_base_less_than_p}')
+            print(f'base_p_theta > 0.5: {count_base_greater_than_half}')
+            print(f'p_theta > 0.5: {count_p_greater_than_half}')
+            self.all_count_base_less_than_p += count_base_less_than_p
+            self.all_count_base_greater_than_half += count_base_greater_than_half
+            self.all_count_p_greater_than_half += count_p_greater_than_half
+            self.all_data_count += len(base_p_theta)
+            theta_data = {
+                'base_p_theta < p_theta': self.all_count_base_less_than_p,
+                'base_p_theta < p_theta (%)': self.all_count_base_less_than_p / self.all_data_count * 100,
+                'base_p_theta > 0.5': self.all_count_base_greater_than_half,
+                'base_p_theta > 0.5 (%)': self.all_count_base_greater_than_half / self.all_data_count * 100,
+                'p_theta > 0.5': self.all_count_p_greater_than_half,
+                'p_theta > 0.5 (%)': self.all_count_p_greater_than_half / self.all_data_count * 100,
+                'all_data_count': self.all_data_count
+            }
+
+            theta_file = 'muffin/train/theta.jsonl'
+            with open(theta_file, 'a') as f:
+                f.write(json.dumps(theta_data) + '\n')
+            
+            reward_accuracies = (chosen_rewards > rejected_rewards).float()
+
+            SFT_weight = float(os.environ.get('SFT_weight', 0.0))
+            DPO_weight = float(os.environ.get('DPO_weight', 1.0))
+            loss = DPO_weight * losses.mean() - SFT_weight * policy_win_logp.mean()
+
+            t = 'train' if model.training else 'test'
+            metrics = {}
+            metrics = collect_preference_metrics(metrics, t, chosen_rewards, rejected_rewards,
+                                                policy_rej_logp, policy_win_logp,
+                                                ref_rej_logp, ref_win_logp, reward_accuracies,
+                                                gather_and_do_mean)
+            # self.log(metrics)
+            loss = loss * 0.0
+        return loss
 
 class LLaVA15DPOTrainer(ZephyrTrainer):
 
@@ -341,45 +461,6 @@ class LLaVA15DPOTrainer(ZephyrTrainer):
         SFT_weight = float(os.environ.get('SFT_weight', 0.0))
         DPO_weight = float(os.environ.get('DPO_weight', 1.0))
         loss = DPO_weight * losses.mean() - SFT_weight * policy_win_logp.mean()
-
-        t = 'train' if model.training else 'test'
-        metrics = {}
-        metrics = collect_preference_metrics(metrics, t, chosen_rewards, rejected_rewards,
-                                             policy_rej_logp, policy_win_logp,
-                                             ref_rej_logp, ref_win_logp, reward_accuracies,
-                                             gather_and_do_mean)
-        self.log(metrics)
-
-        return loss
-    
-class LLaVA15MPOTrainer(ZephyrTrainer):
-
-    def compute_loss(self, model: Module, inputs: dict, return_outputs=False):
-        if self.args.past_index >= 0:
-            raise NotImplementedError
-
-        def gather_and_do_mean(x):
-            return self._nested_gather(x.mean()).mean().item()
-
-        data_dict = inputs
-        yc_len = (data_dict["win_labels"] != -100).sum(dim=1)
-        policy_win_logp, policy_rej_logp, ref_win_logp, ref_rej_logp, beta = get_beta_and_logps(
-            data_dict, model, self.args, is_llava15=True)
-
-        dpo_loss, quality_loss, sft_loss, chosen_rewards, rejected_rewards = mpo_loss(policy_win_logp,
-                                                            policy_rej_logp,
-                                                            ref_win_logp,
-                                                            ref_rej_logp,
-                                                            beta=beta,
-                                                            delta=self.args.delta,
-                                                            yc_len=yc_len)
-        reward_accuracies = (chosen_rewards > rejected_rewards).float()
-
-        SFT_weight = float(os.environ.get('SFT_weight', 0.0))
-        DPO_weight = float(os.environ.get('DPO_weight', 0.5))
-        MPO_weight = float(os.environ.get('MPO_weight', 0.5))
-        # loss = DPO_weight * losses.mean() + MPO_weight * quality_loss.mean() + SFT_weight *(-policy_win_logp.mean())
-        loss = DPO_weight * dpo_loss.mean() + MPO_weight * quality_loss.mean() + SFT_weight * sft_loss.mean()
 
         t = 'train' if model.training else 'test'
         metrics = {}

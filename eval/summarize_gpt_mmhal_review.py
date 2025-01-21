@@ -23,7 +23,10 @@ def cal_informative(path, return_meta=False):
 
     scores = []
     for i, response in enumerate(responses):
-        response = response['choices'][0]['message']['content']
+        if "gpt4_review" in response:
+            response = response['gpt4_review']
+        else:
+            response = response['choices'][0]['message']['content']
         scores_found = []
         for s in range(7):
             if f'rating: {s}' in response.lower():
@@ -55,7 +58,10 @@ def cal_mmhalscore(path):
 
     scores = []
     for i, response in enumerate(responses):
-        response = response['choices'][0]['message']['content']
+        if "gpt4_review" in response:
+            response = response['gpt4_review']
+        else:
+            response = response['choices'][0]['message']['content']
         scores_found = []
         for s in range(7):
             if f'rating: {s}' in response.lower():

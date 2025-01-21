@@ -9,6 +9,7 @@ import glob
 
 if __name__ == '__main__':
     base_dir = sys.argv[1]
+    # base_dir = "./result/RLAIF-V-7B-lora-1w1_base"
     print(base_dir)
 
     patterns = ['*', '*/*', '*/*/*', '*/*/*/*', '*/*/*/*/*']

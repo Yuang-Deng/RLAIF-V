@@ -1,20 +1,18 @@
 import argparse
 import torch
 import os
-import json
 from tqdm import tqdm
-import shortuuid
-import base64
 import io
-import sys
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-from llava.conversation import conv_templates, SeparatorStyle
+from llava.conversation import conv_templates
 from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from llava.mm_utils import tokenizer_image_token, process_images, get_model_name_from_path
 
 from PIL import Image
 import math
+import datasets as hf_datasets
+import pandas as pd
 
 
 def split_list(lst, n):
@@ -29,20 +27,19 @@ def get_chunk(lst, n, k):
 
 
 def eval_model(args):
-    # Model
+    hf_data = hf_datasets.load_dataset('splited_dataset/1w1')['train'].cast_column("image", hf_datasets.Image(decode=False))
+
     disable_torch_init()
     model_path = os.path.expanduser(args.model_path)
-    model_base = args.model_base
-    model_name = args.model_name
-    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_base, model_name, device_map={"": 'cuda'})
-
-    questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
-    questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
+    model_path = ".ckpt/llava15_7b_DPO-llava15_rlaifv_lora_4w_mpo/checkpoints"
+    model_name = 'llava-v1.5-7b_lora'
+    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, 'liuhaotian/llava-v1.5-7b', model_name, device_map={"": 'cuda'})
+    
     answers_file = os.path.expanduser(args.answers_file)
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
-    ans_file = open(answers_file, "w")
     question_idx=0
-    for line in tqdm(questions):
+    output_dicts = []
+    for line in tqdm(hf_data):
         qs = line["question"]
         cur_prompt = qs
         if model.config.mm_use_im_start_end:
@@ -58,9 +55,9 @@ def eval_model(args):
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
 
         if 'image' in line.keys():
-            image_file = line["image"]
-            image_bytes = base64.b64decode(image_file)
-            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            image_file = line["image"]['bytes']
+            # image_bytes = base64.b64decode(image_file)
+            image = Image.open(io.BytesIO(image_file)).convert('RGB')
         elif 'image_path' in line.keys():
             image_path = line['image_path']
             image = Image.open(image_path).convert('RGB')
@@ -70,36 +67,67 @@ def eval_model(args):
         image_tensor = process_images([image], image_processor, model.config)[0]
 
         with torch.inference_mode():
-            output_ids = model.generate(
+
+            
+            args.temperature = 1
+            top_k = 20
+            args.num_beams = 1
+            
+            output_ids_1 = model.generate(
                 input_ids,
                 images=image_tensor.unsqueeze(0).half().cuda(),
                 image_sizes=[image.size],
                 do_sample=True if args.temperature > 0 else False,
                 temperature=args.temperature,
                 top_p=args.top_p,
+                top_k=top_k,
                 num_beams=args.num_beams,
+                return_dict_in_generate=True,
+                output_scores=True,
+                output_logits=True,
+                # no_repeat_ngram_size=3,
+                max_new_tokens=1024,
+                use_cache=True)
+            
+            output_ids_2 = model.generate(
+                input_ids,
+                images=image_tensor.unsqueeze(0).half().cuda(),
+                image_sizes=[image.size],
+                do_sample=True if args.temperature > 0 else False,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=top_k,
+                num_beams=args.num_beams,
+                return_dict_in_generate=True,
+                output_scores=True,
+                output_logits=True,
                 # no_repeat_ngram_size=3,
                 max_new_tokens=1024,
                 use_cache=True)
 
-        outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-
-        ans_id = shortuuid.uuid()
-        ans_file.write(json.dumps({"question_id": question_idx,
-                                   "image_id": line['image_id'] if 'image_id' in line else line['image_url'],
-                                   "prompt": cur_prompt,
-                                   "text": outputs,
-                                   "model_id": model_name
-                                   }) + "\n")
-        ans_file.flush()
+        outputs1 = tokenizer.batch_decode(output_ids_1.sequences, skip_special_tokens=True)[0].strip()
+        outputs2 = tokenizer.batch_decode(output_ids_2.sequences, skip_special_tokens=True)[0].strip()
+        
         question_idx += 1
-    ans_file.close()
+        output_dicts.append({
+            "question_id": question_idx,
+            "image": line["image"],
+            "prompt": cur_prompt,
+            "text1": outputs1,
+            "text2": outputs2,
+            "model_id": model_name,
+            # "out_dict1": {"logits": output_ids_1.logits, "sequences": output_ids_1.sequences, "scores": output_ids_1.scores},
+            # "out_dict2": {"logits": output_ids_2.logits, "sequences": output_ids_2.sequences, "scores": output_ids_2.scores},
+            })
+        if len(output_dicts) % 2000 == 0:
+            torch.save(output_dicts, os.path.join("splited_dataset/1w1", f'RLAIF-V-Dataset-withlogp_{question_idx}.pt'))
+            output_dicts = []
+    torch.save(output_dicts, os.path.join("splited_dataset/1w1", f'RLAIF-V-Dataset-withlogp_{question_idx}.pt'))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
     parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--model-name", type=str, default="llava-v1.5-7b")
     parser.add_argument("--image-folder", type=str, default="")
     parser.add_argument("--question-file", type=str, default="tables/question.jsonl")
     parser.add_argument("--answers-file", type=str, default="answer.jsonl")

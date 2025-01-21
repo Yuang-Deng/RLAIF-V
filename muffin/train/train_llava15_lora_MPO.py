@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from torch.utils.data import Dataset
 
 from utils.utils import is_main_process, get_rank
-from muffin.train.trainers import LLaVA15DPOTrainer
+from muffin.train.trainers import LLaVA15MPOTrainer
 from muffin.data.datasets import SingleDataSourceDataset, MultiDataSourceDataset,RLAIFVDataset
 from muffin.data.data_processors import register_data_path
 from muffin.train.train_utils import encode_multimodal_preference_sample, preprocess_v1
@@ -95,6 +95,7 @@ class TrainingArguments(transformers.TrainingArguments):
     )
     max_steps: int = field(default=1_000)
     no_randaug: bool = False
+    delta: float = 0.1
 
     task: str = field(
         default='LM',
@@ -420,7 +421,7 @@ def train(attn_implementation=None):
         raise NotImplementedError
     elif training_args.task == 'DPO':
         # TODO
-        trainer = LLaVA15DPOTrainer(model=model,
+        trainer = LLaVA15MPOTrainer(model=model,
                                    tokenizer=tokenizer,
                                    args=training_args,
                                    **data_module)
