@@ -29,15 +29,14 @@ def get_chunk(lst, n, k):
 
 
 def eval_model(args):
-    hf_data = hf_datasets.load_dataset('splited_dataset/1w1_dpo')['train'].cast_column("image", hf_datasets.Image(decode=False))
+    hf_data = hf_datasets.load_dataset('splited_dataset/1w1')['train'].cast_column("image", hf_datasets.Image(decode=False))
 
     disable_torch_init()
-    model_path = ".ckpt/llava15_7b_DPO-llava15_rlaifv_lora/checkpoints"
-    model_name = 'llava-v1.5-7b_lora'
-    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, 'liuhaotian/llava-v1.5-7b', model_name, device_map={"": 'cuda'})
+    model_path = args.model_path
+    model_name = args.model_name
+    model_base = args.model_base
+    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_base, model_name, device_map={"": 'cuda'})
     
-    answers_file = os.path.expanduser(args.answers_file)
-    os.makedirs(os.path.dirname(answers_file), exist_ok=True)
     question_idx=0
     output_dicts = []
     batch_len = 8
@@ -62,15 +61,19 @@ def eval_model(args):
             image_file = image['bytes']
             image = Image.open(io.BytesIO(image_file)).convert('RGB')
             
-            # Randomly apply super-resolution or low-resolution
-            if random.choice([True, False]):
-                # Apply super-resolution using Lanczos interpolation
-                high_res_size = (image.width * 2, image.height * 2)
-                image = image.resize(high_res_size, Image.LANCZOS)
+            #图像翻转
+            if args.aug == "flip":
+                image = image.transpose(Image.FLIP_LEFT_RIGHT)
             else:
-                # Apply low-resolution by resizing down and then up
-                image = image.resize((image.width // 2, image.height // 2), Image.Resampling.LANCZOS)
-                image = image.resize((image.width * 2, image.height * 2), Image.Resampling.LANCZOS)
+                # Randomly apply super-resolution or low-resolution
+                if random.choice([True, False]):
+                    # Apply super-resolution using Lanczos interpolation
+                    high_res_size = (image.width * 2, image.height * 2)
+                    image = image.resize(high_res_size, Image.LANCZOS)
+                else:
+                    # Apply low-resolution by resizing down and then up
+                    image = image.resize((image.width // 2, image.height // 2), Image.Resampling.LANCZOS)
+                    image = image.resize((image.width * 2, image.height * 2), Image.Resampling.LANCZOS)
             
             batch_images.append(image)
             batch_prompts.append([input_ids, cur_prompt])
@@ -88,37 +91,22 @@ def eval_model(args):
             top_k = 20
             args.num_beams = 1
 
-            # output_ids_1 = model.generate(
-            #     batch_input_ids,
-            #     images=image_tensors.half().cuda(),
-            #     image_sizes=[image.size for image in batch_images],
-            #     do_sample=True if args.temperature > 0 else False,
-            #     temperature=args.temperature,
-            #     top_p=args.top_p,
-            #     top_k=top_k,
-            #     num_beams=args.num_beams,
-            #     return_dict_in_generate=True,
-            #     output_scores=True,
-            #     output_logits=True,
-            #     max_new_tokens=1024,
-            #     use_cache=True)
+            output_ids_1 = model.generate(
+                batch_input_ids,
+                images=image_tensors.half().cuda(),
+                image_sizes=[image.size for image in batch_images],
+                do_sample=True if args.temperature > 0 else False,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=top_k,
+                num_beams=args.num_beams,
+                return_dict_in_generate=True,
+                output_scores=True,
+                output_logits=True,
+                max_new_tokens=1024,
+                use_cache=True)
             
-            # output_ids_2 = model.generate(
-            #     batch_input_ids,
-            #     images=image_tensors.half().cuda(),
-            #     image_sizes=[image.size for image in batch_images],
-            #     do_sample=True if args.temperature > 0 else False,
-            #     temperature=args.temperature,
-            #     top_p=args.top_p,
-            #     top_k=top_k,
-            #     num_beams=args.num_beams,
-            #     return_dict_in_generate=True,
-            #     output_scores=True,
-            #     output_logits=True,
-            #     max_new_tokens=1024,
-            #     use_cache=True)
-
-            output_ids_3 = model.generate(
+            output_ids_2 = model.generate(
                 batch_input_ids,
                 images=image_tensors.half().cuda(),
                 image_sizes=[image.size for image in batch_images],
@@ -133,11 +121,26 @@ def eval_model(args):
                 max_new_tokens=1024,
                 use_cache=True)
 
-        # outputs1 = tokenizer.batch_decode(output_ids_1.sequences, skip_special_tokens=True)
-        # outputs2 = tokenizer.batch_decode(output_ids_2.sequences, skip_special_tokens=True)
-        outputs3 = tokenizer.batch_decode(output_ids_3.sequences, skip_special_tokens=True)
+            # output_ids_3 = model.generate(
+            #     batch_input_ids,
+            #     images=image_tensors.half().cuda(),
+            #     image_sizes=[image.size for image in batch_images],
+            #     do_sample=True if args.temperature > 0 else False,
+            #     temperature=args.temperature,
+            #     top_p=args.top_p,
+            #     top_k=top_k,
+            #     num_beams=args.num_beams,
+            #     return_dict_in_generate=True,
+            #     output_scores=True,
+            #     output_logits=True,
+            #     max_new_tokens=1024,
+            #     use_cache=True)
+
+        outputs1 = tokenizer.batch_decode(output_ids_1.sequences, skip_special_tokens=True)
+        outputs2 = tokenizer.batch_decode(output_ids_2.sequences, skip_special_tokens=True)
+        # outputs3 = tokenizer.batch_decode(output_ids_3.sequences, skip_special_tokens=True)
         
-        for idx, (line, output1, output3) in enumerate(zip(batch_data["image"], batch_data["chosen"], outputs3)):
+        for idx, (line, output1, output3) in enumerate(zip(batch_data["image"], outputs1, outputs2)):
             question_idx += 1
             output_dicts.append({
                 "question_id": question_idx,
@@ -147,8 +150,8 @@ def eval_model(args):
                 "text2": output3.strip(),
                 "model_id": model_name,
             })
-            if len(output_dicts) % 1000 == 0:
-                output_dir = os.path.join("splited_dataset/1w1_dpo_img_srlr")
+            if len(output_dicts) % 2000 == 0:
+                output_dir = os.path.join(args.save_dir)
                 os.makedirs(output_dir, exist_ok=True)
                 torch.save(output_dicts, os.path.join(output_dir, f'RLAIF-V-Dataset-withlogp_{question_idx}.pt'))
                 output_dicts = []
@@ -158,11 +161,11 @@ def eval_model(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
-    parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--image-folder", type=str, default="")
-    parser.add_argument("--question-file", type=str, default="tables/question.jsonl")
-    parser.add_argument("--answers-file", type=str, default="answer.jsonl")
+    parser.add_argument("--model-path", type=str, default=".ckpt/llava15_7b_DPO-llava15_rlaifv_lora_3k1_from_4w/checkpoints")
+    parser.add_argument("--model-base", type=str, default="liuhaotian/llava-v1.5-7b")
+    parser.add_argument("--model-name", type=str, default="llava-v1.5-7b_lora")
+    parser.add_argument("--aug", type=str, default="flip")
+    parser.add_argument("--save-dir", type=str, default="splited_dataset/1w1_3kdpo_img_lrsr")
     parser.add_argument("--conv-mode", type=str, default="llava_v1")
     parser.add_argument("--num-chunks", type=int, default=1)
     parser.add_argument("--chunk-idx", type=int, default=0)
